@@ -7,6 +7,7 @@ using UnityEngine.Experimental.Rendering.HDPipeline;
 using System;
 using System.Globalization;
 using UnityEngine.Rendering.PostProcessing;
+using SQP;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -183,7 +184,7 @@ public class Game : MonoBehaviour
     [ConfigVar(Name = "chartype", DefaultValue = "-1", Description = "Character to start with (-1 uses default character)")]
     public static ConfigVar characterType;
 
-    [ConfigVar(Name = "allowcharchange", DefaultValue = "1", Description = "Is changing charaacter allowed")]
+    [ConfigVar(Name = "allowcharchange", DefaultValue = "1", Description = "Is changing character allowed")]
     public static ConfigVar allowCharChange;
 
     [ConfigVar(Name = "debug.cpuprofile", DefaultValue = "0", Description = "Profile and dump cpu usage")]
@@ -193,7 +194,7 @@ public class Game : MonoBehaviour
     public static ConfigVar netDropEvents;
     
     static readonly string k_UserConfigFilename = "user.cfg";
-    static readonly string k_GameConfigFilename = "game.cfg";
+    public static readonly string k_BootConfigFilename = "boot.cfg";
 
     public static GameConfiguration config;
     public static InputSystem inputSystem;
@@ -203,6 +204,7 @@ public class Game : MonoBehaviour
     public Camera bootCamera;
     
     public LevelManager levelManager;
+    public SQPClient sqpClient;
 
     public static double frameTime;
 
@@ -276,17 +278,17 @@ public class Game : MonoBehaviour
         m_Clock = new System.Diagnostics.Stopwatch();
         m_Clock.Start();
 
-#if UNITY_EDITOR
-        StateHistory.Initialize();       
-#endif
-        
         var buildInfo = FindObjectOfType<BuildInfo>();
         if (buildInfo != null)
             _buildId = buildInfo.buildId;
 
         var commandLineArgs = new List<string>(System.Environment.GetCommandLineArgs());
 
+#if UNITY_STANDALONE_LINUX
+        m_isHeadless = true;
+#else
         m_isHeadless = commandLineArgs.Contains("-batchmode");
+#endif
         var consoleRestoreFocus = commandLineArgs.Contains("-consolerestorefocus");
 
         if (m_isHeadless)
@@ -344,7 +346,7 @@ public class Game : MonoBehaviour
 
         ConfigVar.Init();
 
-        Console.EnqueueCommandNoHistory("exec " + k_UserConfigFilename);
+        Console.EnqueueCommandNoHistory("exec -s " + k_UserConfigFilename);
 
         // Default is to allow no frame cap, i.e. as fast as possible if vsync is disabled
         Application.targetFrameRate = -1;
@@ -354,21 +356,21 @@ public class Game : MonoBehaviour
             Application.targetFrameRate = serverTickRate.IntValue;
             QualitySettings.vSyncCount = 0; // Needed to make targetFramerate work; even in headless mode
 
+#if !UNITY_STANDALONE_LINUX
             if (!commandLineArgs.Contains("-nographics"))
                 GameDebug.Log("WARNING: running -batchmod without -nographics");
+#endif
         }
         else
         {
             RenderSettings.Init();
-
-            // Determine if we are a 'normal' game build. If so we run game.cfg to get started
-            //bool menuBoot = (buildInfo != null && buildInfo.buildId != "AutoBuild" && !commandLineArgs.Contains("-nogame")) || commandLineArgs.Contains("-game");
-            if(!commandLineArgs.Contains("-nogame"))
-            {
-                Console.EnqueueCommandNoHistory("exec " + k_GameConfigFilename);
-            }
         }
 
+        // Out of the box game behaviour is driven by boot.cfg unless you ask it not to
+        if(!commandLineArgs.Contains("-noboot"))
+        {
+            Console.EnqueueCommandNoHistory("exec -s " + k_BootConfigFilename);
+        }
 
         var forceClientSystem = commandLineArgs.Contains("-forceclientsystems");
         if (!m_isHeadless || forceClientSystem)
@@ -382,7 +384,9 @@ public class Game : MonoBehaviour
             clientFrontend = go.GetComponentInChildren<ClientFrontend>();
         }
 
-        GameDebug.Log("fps.sample initialized");
+        sqpClient = new SQP.SQPClient();
+
+        GameDebug.Log("FPS Sample initialized");
 #if UNITY_EDITOR
         GameDebug.Log("Build type: editor");
 #elif DEVELOPMENT_BUILD
@@ -612,6 +616,8 @@ public class Game : MonoBehaviour
         WindowFocusUpdate();
 
         UpdateCPUStats();
+
+        sqpClient.Update();
 
         endUpdateEvent?.Invoke();
     }
